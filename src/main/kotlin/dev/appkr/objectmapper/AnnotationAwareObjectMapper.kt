@@ -24,72 +24,80 @@ class AnnotationAwareObjectMapper(
     private val customMapperRegistry: CustomMapperRegistry,
 ) {
     /**
-     * 주어진 from 객체로부터 to 객체를 생성한다
+     * Creates an instance of the 'to' object from the given 'from' object.
      */
-    fun <T : Any> copyProperties(from: Any, to: KClass<T>): T {
-        // to 클래스의 Primary Constructor를 구한다
-        val toConstructor: KFunction<T> = to.primaryConstructor
-            ?: throw IllegalStateException("${to.simpleName} 클래스의 생성자에 접근할 수 없습니다")
+    fun <T : Any> copyProperties(
+        from: Any,
+        to: KClass<T>,
+    ): T {
+        // Get the Primary Constructor of the 'to' class.
+        val toConstructor: KFunction<T> =
+            to.primaryConstructor
+                ?: throw IllegalStateException("Unable to access primary constructor: class=${to.simpleName}")
 
-        // to 클래스의 생성자에 전달할 프로퍼티 맵을 구한다
-        val toConstructorArgs: Map<KParameter, Any?> = toConstructor.parameters
-            .associateWith { findValueOf(constructorParam = it, sourceObject = from) }
+        // Get the property map to be passed to the 'to' class constructor.
+        val toConstructorArgs: Map<KParameter, Any?> =
+            toConstructor.parameters
+                .associateWith { findValueOf(constructorParam = it, sourceObject = from) }
 
-        // to 객체를 생성한다
+        // Create the 'to' object.
         return toConstructor.callBy(toConstructorArgs)
     }
 
     /**
-     * 원본 객체로부터 생성자의 파라미터에 할당할 값을 찾는다
+     * Finds the value to assign to the constructor parameter from the source object.
      *
-     * 값을 찾는 규칙:
-     *   - 생성자 파라미터의 이름과 원본 객체의 프로퍼티 이름이 같으면
-     *   - 생성자 파라미터의 이름과 원보 객체의 프로퍼티에 선언한 [MapTo.value] 값이 같으면
+     * Rules for finding the value:
+     *   - If the name of the constructor parameter matches the property name of the source object.
+     *   - If the name of the constructor parameter matches the [MapTo.value] declared on the property of the source object.
      *
-     * @param constructorParam 생성할 클래스의 생성자 파라미터
-     * @param sourceObject 파라미터의 값으로 할당할 값을 찾을 원본 객체
+     * @param constructorParam The constructor parameter of the class to be created.
+     * @param sourceObject The object from which the parameter value will be found.
      * @throws IllegalStateException
-     *   - 생성할 클래스의 생성자 파라미터의 값으로 할당할 값을 원본 객체에서 찾을 수 없는 경우
-     *   - 원본 객체로부터 값을 구했으나, 그 값이 null인 반면, 생성할 클래스의 파라미터는 Non-null로 선언된 경우
-     *   - 원본 객체에서 일치하는 프로퍼티를 찾았으나,
-     *   [TypeConverter], [builtInConvert]를 이용해서 생성자 파라미터에 할당할 수 있는 적절한 값으로 변경하지 못하는 경우
+     *   - When a value for the constructor parameter cannot be found in the source object
+     *   - When the value retrieved from the source object is null, but the constructor parameter is declared as non-null
+     *   - When a matching property is found in the source object, but cannot be converted to the correct type
      */
     private fun findValueOf(
         constructorParam: KParameter,
         sourceObject: Any,
     ): Any? {
-        // 값을 할당할 생성자 파라미터를 구한다
-        val propertyName = constructorParam.name
-            ?: throw IllegalStateException("생성자 파라미터 이름이 null일 수 없습니다")
+        // Get the constructor parameter to assign the value.
+        val propertyName =
+            constructorParam.name
+                ?: throw IllegalStateException("Constructor parameter name should not be null")
 
-        // 데이터 원본 객체에서 값을 찾을 프로퍼티를 구한다
-        val fromProperty = sourceObject::class.memberProperties
-            .find { it.findAnnotation<MapTo>()?.value == propertyName || it.name == propertyName }
-            ?.apply { isAccessible = true }
-            ?: throw IllegalStateException("${propertyName}의 값을 구할 수 없습니다")
+        // Get the property from the source object to retrieve the value.
+        val fromProperty =
+            sourceObject::class
+                .memberProperties
+                .find { it.findAnnotation<MapTo>()?.value == propertyName || it.name == propertyName }
+                ?.apply { isAccessible = true }
+                ?: throw IllegalStateException("Unable to find a value from the sourceObject: propertyName=$propertyName")
 
-        // 맵핑 가능한 프로퍼티는 찾았고, 원본 객체에서 값을 꺼낸다
+        // Extract the value from the matching property in the source object.
         val value = fromProperty.call(sourceObject)
 
         if (value == null) {
             if (constructorParam.isOptional || constructorParam.type.isMarkedNullable) {
-                // 생성자 파라미터에 null 할당을 할 수 있는 상황이라면
+                // If it's possible to assign null to the constructor parameter.
                 return value
             }
-            throw IllegalStateException("${propertyName}의 값으로 null을 할당할 수 없습니다")
+            throw IllegalStateException("Null value cannot be assigned: paramName=$propertyName")
         }
 
-        // 꺼낸 값의 타입과, 할당할 파라미터의 타입이 일치하지 않으면, 타입 변환을 시도한다
+        // If the extracted value's type doesn't match the constructor parameter's type, try type conversion.
         if (fromProperty.returnType != constructorParam.type) {
-            val convertedValue = tryConvert(
-                value = value,
-                fromType = fromProperty.returnType,
-                toType = constructorParam.type,
-            )
-                ?: throw IllegalStateException(
-                    "'${constructorParam.name}: ${constructorParam.type}'에" +
-                            "'${fromProperty.name}: ${fromProperty.returnType}'을 할당할 수 없습니다",
+            val convertedValue =
+                tryConvert(
+                    value = value,
+                    fromType = fromProperty.returnType,
+                    toType = constructorParam.type,
                 )
+                    ?: throw IllegalStateException(
+                        "Type conversion failed: paramName=${constructorParam.name}, paramType=${constructorParam.type}, " +
+                            "sourceProperty=${fromProperty.name}, sourceType=${fromProperty.returnType}",
+                    )
 
             return convertedValue
         }
@@ -98,26 +106,33 @@ class AnnotationAwareObjectMapper(
     }
 
     /**
-     * 타입 변환을 시도한다
+     * Attempts type conversion.
      *
-     * @param value 원본 값
-     * @param fromType 원본 값의 타입
-     * @param toType 대상 값의 타입
+     * @param value The original value.
+     * @param fromType The type of the original value.
+     * @param toType The type of the target value.
      */
-    private fun tryConvert(value: Any?, fromType: KType, toType: KType): Any? {
+    private fun tryConvert(
+        value: Any?,
+        fromType: KType,
+        toType: KType,
+    ): Any? {
         if (value == null) return null
 
-        // @JvmInline 클래스는 TypeConverter를 사용할 것을 기대한다
+        // Attempts convert @JvmInline classes.
         if (fromType.jvmErasure.isInlineClass() || toType.jvmErasure.isInlineClass()) {
-            // 이미 변환된 @JvmInline 클래스에 대한 중복 변환 방지
             if (value::class == toType.jvmErasure) return value
         }
 
-        // Collection의 타입파라미터 타입을 식별하고, 재귀적으로 값을 변환한다
+        // Identify the type parameter for Collection and recursively convert values.
         if (fromType.classifier == Collection::class && toType.classifier == Collection::class) {
             val fromCollection = value as Collection<*>
-            val toElementType = toType.arguments.first().type
-                ?: throw IllegalStateException("목표 콜렉션의 타입을 확인할 수 없습니다")
+            val toElementType =
+                toType.arguments.first().type
+                    ?: throw IllegalStateException(
+                        "Unable to identify target collection element type: " +
+                            "fromType=$fromType, toType=$toType",
+                    )
 
             return fromCollection.map {
                 tryConvert(
@@ -125,60 +140,64 @@ class AnnotationAwareObjectMapper(
                     fromType = it?.javaClass?.kotlin?.starProjectedType ?: fromType,
                     toType = toElementType,
                 )
-                    ?: throw IllegalStateException("콜렉션 엘리먼트의 값을 얻지 못했습니다: $it")
+                    ?: throw IllegalStateException("Unable to get collection element value: element=$it")
             }
         }
 
-        // Map의 키, 값 각각의 타입파라미터 타입을 식별하고, 재귀적으로 값을 변환한다
+        // Identify the type parameters for Map keys and values, and recursively convert values.
         if (fromType.classifier == Map::class && toType.classifier == Map::class) {
             val fromMap = value as Map<*, *>
-            val toKeyType = toType.arguments[0].type
-                ?: throw IllegalStateException("목표 맵의 키 타입을 확인할 수 없습니다")
-            val toValueType = toType.arguments[1].type
-                ?: throw IllegalStateException("목표 맵의 값 타입을 확인할 수 없습니다")
+            val toKeyType =
+                toType.arguments[0].type
+                    ?: throw IllegalStateException("Unable to identify target map key type: toType=$toType")
+            val toValueType =
+                toType.arguments[1].type
+                    ?: throw IllegalStateException("Unable to identify target map value type: toType=$toType")
 
             return fromMap
                 .mapKeys { (key, _) ->
                     tryConvert(
                         value = key,
                         fromType = key?.javaClass?.kotlin?.starProjectedType ?: fromType,
-                        toType = toKeyType
+                        toType = toKeyType,
                     )
-                        ?: throw IllegalStateException("맵의 키를 얻지 못했습니다: $key")
-                }
-                .mapValues { (_, mapValue) ->
+                        ?: throw IllegalStateException("Unable to get map key's value: key=$key")
+                }.mapValues { (_, mapValue) ->
                     tryConvert(
                         value = mapValue,
                         fromType = mapValue?.javaClass?.kotlin?.starProjectedType ?: fromType,
                         toType = toValueType,
                     )
-                        ?: throw IllegalStateException("맵의 값을 얻지 못했습니다: $mapValue")
+                        ?: throw IllegalStateException("Unable to get map's value: value=$mapValue")
                 }
         }
 
         /*
-         * 런타임시 객체 타입이 서로 다른지 확인한다
-         *   - Foo와 Bar의 jvmErasure는 각각 Foo::class와 Bar::class이므로 아래 조건물을 충족한다
-         *   - List<String>과 List<Int>의 jvmErasure는 List::class로 같으므로 아래 조건문을 충족하지 않는다
+         * Check if the runtime object types are different.
+         *   - Foo and Bar have jvmErasure of Foo::class and Bar::class respectively, so this condition is met.
+         *   - List<String> and List<Int> both have jvmErasure of List::class, so this condition is not met.
          */
         if (fromType.jvmErasure != toType.jvmErasure) {
-            // 객체 타입이 다른 경우에는 CustomMapper를 시도해본다
+            // If object types are different, try CustomMapper.
             val mapper = customMapperRegistry.getMapper(fromType.jvmErasure, toType.jvmErasure)
             val mappedValue = (mapper as? CustomMapper<Any, Any>)?.map(value)
             if (mappedValue != null) return mappedValue
         }
 
-        // 내장된 타입 변환을 시도한다
+        // Attempt built-in type conversion.
         val classConversion = builtInConvert<Any>(value, toType)
         if (classConversion != null) return classConversion
 
-        // 여기까지 도달했다면 변환이 불가한 상황이라, null을 반환해서 재귀를 탈출하도록 한다
+        // If reached here, conversion is not possible, return null to exit recursion.
         return null
     }
 
     @Suppress("UNCHECKED_CAST")
-    private fun <T> builtInConvert(value: Any, toType: KType): T? {
-        return when (toType.classifier) {
+    private fun <T> builtInConvert(
+        value: Any,
+        toType: KType,
+    ): T? =
+        when (toType.classifier) {
             Int::class -> value.toString().toIntOrNull() as? T
             Long::class -> value.toString().toLongOrNull() as? T
             Double::class -> value.toString().toDoubleOrNull() as? T
@@ -194,9 +213,6 @@ class AnnotationAwareObjectMapper(
             String::class -> value.toString() as? T
             else -> null
         }
-    }
 }
 
-private fun KClass<*>.isInlineClass(): Boolean {
-    return this.hasAnnotation<JvmInline>()
-}
+private fun KClass<*>.isInlineClass(): Boolean = this.hasAnnotation<JvmInline>()

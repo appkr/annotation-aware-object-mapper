@@ -1,3 +1,4 @@
+@file:Suppress("ktlint")
 package dev.appkr.objectmapper
 
 import io.kotest.assertions.throwables.shouldThrow
@@ -9,31 +10,38 @@ import java.time.LocalDate
 
 class AnnotationAwareObjectMapperTest : DescribeSpec() {
     init {
-        describe("map") {
-            val mapper = AnnotationAwareObjectMapper(
-                customMapperRegistry = CustomMapperRegistry()
-                    .apply {
-                        registerMapper(
-                            from = UserResource::class,
-                            to = User::class,
-                            mapper = UserResourceToUserMapper(),
-                        )
-                    },
-            )
+        describe("copyProperties") {
+            val mapper =
+                AnnotationAwareObjectMapper(
+                    customMapperRegistry =
+                        CustomMapperRegistry()
+                            .apply {
+                                registerMapper(
+                                    from = UserResource::class,
+                                    to = User::class,
+                                    mapper = UserResourceToUserMapper(),
+                                )
+                            },
+                )
 
             context("when called correctly") {
-                it("should map correctly") {
-                    mapper.copyProperties(johnDoe, User::class) shouldBe
-                            User(
-                                name = "John Doe",
-                                address = Address("San", "NewYork"),
-                                mbti = Mbti(MbtiEnum.Y, MbtiEnum.Y, MbtiEnum.Y, MbtiEnum.Y),
-                                age = BigDecimal.valueOf(40),
-                                birthday = LocalDate.ofEpochDay(0),
-                                height = BigDecimal.valueOf(180),
-                                contacts = listOf(Contact("010-1234-5678"), Contact("02-1234-5678")),
-                                families = mapOf(
-                                    Relationship("Dad") to User(
+                val expected =
+                    User(
+                        name = "John Doe",
+                        address = Address("San", "NewYork"),
+                        mbti = Mbti(MbtiEnum.Y, MbtiEnum.Y, MbtiEnum.Y, MbtiEnum.Y),
+                        age = BigDecimal.valueOf(40),
+                        birthday = LocalDate.ofEpochDay(0),
+                        height = BigDecimal.valueOf(180),
+                        contacts =
+                            listOf(
+                                Contact("010-1234-5678"),
+                                Contact("02-1234-5678"),
+                            ),
+                        families =
+                            mapOf(
+                                Relationship("Dad") to
+                                    User(
                                         name = "William Doe",
                                         address = Address("San", "NewYork"),
                                         mbti = Mbti(MbtiEnum.N, MbtiEnum.N, MbtiEnum.N, MbtiEnum.N),
@@ -42,37 +50,43 @@ class AnnotationAwareObjectMapperTest : DescribeSpec() {
                                         height = BigDecimal.valueOf(170),
                                         contacts = emptyList(),
                                         families = emptyMap(),
-                                        friends = emptyList()
+                                        friends = emptyList(),
                                     ),
+                            ),
+                        friends =
+                            listOf(
+                                User(
+                                    name = "John Smith",
+                                    address = Address("San", "NewYork"),
+                                    mbti = Mbti(MbtiEnum.Y, MbtiEnum.N, MbtiEnum.Y, MbtiEnum.N),
+                                    age = BigDecimal.valueOf(38),
+                                    birthday = null,
+                                    height = BigDecimal.valueOf(175),
+                                    contacts = emptyList(),
+                                    families = emptyMap(),
+                                    friends = emptyList(),
                                 ),
-                                friends = listOf(
-                                    User(
-                                        name = "John Smith",
-                                        address = Address("San", "NewYork"),
-                                        mbti = Mbti(MbtiEnum.Y, MbtiEnum.N, MbtiEnum.Y, MbtiEnum.N),
-                                        age = BigDecimal.valueOf(38),
-                                        birthday = null,
-                                        height = BigDecimal.valueOf(175),
-                                        contacts = emptyList(),
-                                        families = emptyMap(),
-                                        friends = emptyList()
-                                    ),
-                                )
-                            )
+                            ),
+                    )
+
+                it("should copy all properties from source object and create a target instance correctly") {
+                    val actual = mapper.copyProperties(johnDoe, User::class)
+                    actual shouldBe expected
                 }
             }
         }
 
-        describe("map fail cases") {
+        describe("failing cases") {
             val mapper = AnnotationAwareObjectMapper(customMapperRegistry = CustomMapperRegistry())
 
             withData(
                 nameFn = { "${it.simpleName}" },
-                ts = listOf(
-                    UserWithTypeMismatch::class,
-                    UserWithNonNullProperty::class,
-                    UserWithoutConstructor::class,
-                )
+                ts =
+                    listOf(
+                        UserWithTypeMismatch::class,
+                        UserWithNonNullProperty::class,
+                        UserWithoutConstructor::class,
+                    ),
             ) {
                 shouldThrow<IllegalStateException> {
                     mapper.copyProperties(invalid, it)
@@ -81,58 +95,67 @@ class AnnotationAwareObjectMapperTest : DescribeSpec() {
         }
     }
 
-    private val invalid = UserResource(
-        fullName = "Anonymous",
-        address = Address("Unknown", "Unknown"),
-        mbti = Mbti(MbtiEnum.N, MbtiEnum.N, MbtiEnum.N, MbtiEnum.N),
-        stringAge = null,
-        birthday = null,
-        height = "0",
-        contacts = listOf(),
-        families = emptyMap(),
-        friends = emptySet()
-    )
-    private val johnSmith = UserResource(
-        fullName = "John Smith",
-        address = Address("San", "NewYork"),
-        mbti = Mbti(MbtiEnum.Y, MbtiEnum.N, MbtiEnum.Y, MbtiEnum.N),
-        stringAge = "38",
-        birthday = null,
-        height = "175",
-        contacts = listOf(),
-        families = emptyMap(),
-        friends = emptySet()
-    )
-    private val williamDoe = UserResource(
-        fullName = "William Doe",
-        address = Address("San", "NewYork"),
-        mbti = Mbti(MbtiEnum.N, MbtiEnum.N, MbtiEnum.N, MbtiEnum.N),
-        stringAge = "80",
-        birthday = null,
-        height = "170",
-        contacts = emptyList(),
-        families = emptyMap(),
-        friends = emptySet()
-    )
-    private val johnDoe = UserResource(
-        fullName = "John Doe",
-        address = Address("San", "NewYork"),
-        mbti = Mbti(MbtiEnum.Y, MbtiEnum.Y, MbtiEnum.Y, MbtiEnum.Y),
-        stringAge = "40",
-        birthday = LocalDate.ofEpochDay(0),
-        height = "180",
-        contacts = listOf(Contact("010-1234-5678"), Contact("02-1234-5678")),
-        families = mapOf(Relationship("Dad") to williamDoe),
-        friends = setOf(johnSmith)
-    )
+    private val invalid =
+        UserResource(
+            fullName = "Anonymous",
+            address = Address("Unknown", "Unknown"),
+            mbti = Mbti(MbtiEnum.N, MbtiEnum.N, MbtiEnum.N, MbtiEnum.N),
+            stringAge = null,
+            birthday = null,
+            height = "0",
+            contacts = listOf(),
+            families = emptyMap(),
+            friends = emptyList(),
+        )
+
+    private val johnSmith =
+        UserResource(
+            fullName = "John Smith",
+            address = Address("San", "NewYork"),
+            mbti = Mbti(MbtiEnum.Y, MbtiEnum.N, MbtiEnum.Y, MbtiEnum.N),
+            stringAge = "38",
+            birthday = null,
+            height = "175",
+            contacts = listOf(),
+            families = emptyMap(),
+            friends = emptyList(),
+        )
+
+    private val williamDoe =
+        UserResource(
+            fullName = "William Doe",
+            address = Address("San", "NewYork"),
+            mbti = Mbti(MbtiEnum.N, MbtiEnum.N, MbtiEnum.N, MbtiEnum.N),
+            stringAge = "80",
+            birthday = null,
+            height = "170",
+            contacts = emptyList(),
+            families = emptyMap(),
+            friends = emptyList(),
+        )
+
+    private val johnDoe =
+        UserResource(
+            fullName = "John Doe",
+            address = Address("San", "NewYork"),
+            mbti = Mbti(MbtiEnum.Y, MbtiEnum.Y, MbtiEnum.Y, MbtiEnum.Y),
+            stringAge = "40",
+            birthday = LocalDate.ofEpochDay(0),
+            height = "180",
+            contacts =
+                listOf(
+                    Contact("010-1234-5678"),
+                    Contact("02-1234-5678"),
+                ),
+            families = mapOf(Relationship("Dad") to williamDoe),
+            friends = listOf(johnSmith),
+        )
 }
 
 internal data class Address(val city: String, val state: String)
 internal data class Mbti(val m: MbtiEnum, val b: MbtiEnum, val t: MbtiEnum, val i: MbtiEnum)
 internal enum class MbtiEnum { Y, N; }
-
 @JvmInline internal value class Contact(val value: String)
-
 @JvmInline internal value class Relationship(val value: String)
 
 internal data class UserResource(
@@ -175,8 +198,8 @@ internal class UserResourceToUserMapper : CustomMapper<UserResource, User> {
             birthday = from.birthday,
             height = from.height.toBigDecimal(),
             contacts = from.contacts,
-            families = from.families.mapValues { map(it.value) },
-            friends = from.friends.map { map(it) }
+            families = from.families.mapValues { this.map(it.value) },
+            friends = from.friends.map { this.map(it) },
         )
     }
 }
