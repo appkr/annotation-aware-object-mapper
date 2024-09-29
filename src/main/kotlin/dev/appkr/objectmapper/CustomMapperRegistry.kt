@@ -17,7 +17,5 @@ class CustomMapperRegistry {
     fun <F : Any, T : Any> getMapper(
         from: KClass<F>,
         to: KClass<T>,
-    ): CustomMapper<F, T>? {
-        return mappers[from to to] as? CustomMapper<F, T>
-    }
+    ): CustomMapper<F, T>? = mappers[from to to] as? CustomMapper<F, T>
 }
