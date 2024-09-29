@@ -6,27 +6,24 @@ import io.kotest.datatest.withData
 import io.kotest.matchers.shouldBe
 import java.math.BigDecimal
 import java.time.LocalDate
-import kotlin.reflect.KType
 
 class AnnotationAwareObjectMapperTest : DescribeSpec() {
     init {
         describe("map") {
-            val customMapper = AnnotationAwareObjectMapper(
-                customTypeConverter = object : TypeConverter {
-                    @Suppress("UNCHECKED_CAST")
-                    override fun <T> convert(value: Any, targetType: KType): T? {
-                        return when (targetType.classifier) {
-                            BigDecimal::class -> (value as? String)?.toBigDecimal() as? T
-                            Int::class -> (value as? String)?.toIntOrNull() as? T
-                            else -> null
-                        }
-                    }
-                }
+            val mapper = AnnotationAwareObjectMapper(
+                customMapperRegistry = CustomMapperRegistry()
+                    .apply {
+                        registerMapper(
+                            from = UserResource::class,
+                            to = User::class,
+                            mapper = UserResourceToUserMapper(),
+                        )
+                    },
             )
 
             context("when called correctly") {
                 it("should map correctly") {
-                    customMapper.copyProperties(johnDoe, User::class) shouldBe
+                    mapper.copyProperties(johnDoe, User::class) shouldBe
                             User(
                                 name = "John Doe",
                                 address = Address("San", "NewYork"),
@@ -67,10 +64,10 @@ class AnnotationAwareObjectMapperTest : DescribeSpec() {
         }
 
         describe("map fail cases") {
-            val mapper = AnnotationAwareObjectMapper()
+            val mapper = AnnotationAwareObjectMapper(customMapperRegistry = CustomMapperRegistry())
 
             withData(
-                nameFn = { "$it" },
+                nameFn = { "${it.simpleName}" },
                 ts = listOf(
                     UserWithTypeMismatch::class,
                     UserWithNonNullProperty::class,
@@ -166,4 +163,20 @@ internal data class UserWithTypeMismatch(val age: Short)
 internal data class UserWithNonNullProperty(val age: Int)
 internal class UserWithoutConstructor {
     constructor(name: String)
+}
+
+internal class UserResourceToUserMapper : CustomMapper<UserResource, User> {
+    override fun map(from: UserResource): User {
+        return User(
+            name = from.fullName,
+            address = from.address,
+            mbti = from.mbti,
+            age = from.stringAge?.toBigDecimal(),
+            birthday = from.birthday,
+            height = from.height.toBigDecimal(),
+            contacts = from.contacts,
+            families = from.families.mapValues { map(it.value) },
+            friends = from.friends.map { map(it) }
+        )
+    }
 }

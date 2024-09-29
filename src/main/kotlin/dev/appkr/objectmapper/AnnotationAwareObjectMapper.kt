@@ -21,7 +21,7 @@ import kotlin.reflect.jvm.isAccessible
 import kotlin.reflect.jvm.jvmErasure
 
 class AnnotationAwareObjectMapper(
-    private val customTypeConverter: TypeConverter? = null,
+    private val customMapperRegistry: CustomMapperRegistry,
 ) {
     /**
      * 주어진 from 객체로부터 to 객체를 생성한다
@@ -107,18 +107,10 @@ class AnnotationAwareObjectMapper(
     private fun tryConvert(value: Any?, fromType: KType, toType: KType): Any? {
         if (value == null) return null
 
-        // 커스텀 타입 변환기를 우선적으로 시도한다
-        val converterConversion = customTypeConverter?.convert<Any>(value, toType)
-        if (converterConversion != null) return converterConversion
-
         // @JvmInline 클래스는 TypeConverter를 사용할 것을 기대한다
         if (fromType.jvmErasure.isInlineClass() || toType.jvmErasure.isInlineClass()) {
             // 이미 변환된 @JvmInline 클래스에 대한 중복 변환 방지
             if (value::class == toType.jvmErasure) return value
-
-            val inlineClassConversion = customTypeConverter?.convert<Any>(value, toType)
-                ?: throw IllegalStateException("${fromType.jvmErasure.simpleName}의 처리하는 TypeConverter 등록이 필요합니다")
-            return inlineClassConversion
         }
 
         // Collection의 타입파라미터 타입을 식별하고, 재귀적으로 값을 변환한다
@@ -127,15 +119,14 @@ class AnnotationAwareObjectMapper(
             val toElementType = toType.arguments.first().type
                 ?: throw IllegalStateException("목표 콜렉션의 타입을 확인할 수 없습니다")
 
-            return fromCollection
-                .map {
-                    tryConvert(
-                        value = it,
-                        fromType = it?.javaClass?.kotlin?.starProjectedType ?: fromType,
-                        toType = toElementType,
-                    )
-                        ?: throw IllegalStateException("콜렉션 엘리먼트의 값을 얻지 못했습니다: $it")
-                }
+            return fromCollection.map {
+                tryConvert(
+                    value = it,
+                    fromType = it?.javaClass?.kotlin?.starProjectedType ?: fromType,
+                    toType = toElementType,
+                )
+                    ?: throw IllegalStateException("콜렉션 엘리먼트의 값을 얻지 못했습니다: $it")
+            }
         }
 
         // Map의 키, 값 각각의 타입파라미터 타입을 식별하고, 재귀적으로 값을 변환한다
@@ -171,9 +162,10 @@ class AnnotationAwareObjectMapper(
          *   - List<String>과 List<Int>의 jvmErasure는 List::class로 같으므로 아래 조건문을 충족하지 않는다
          */
         if (fromType.jvmErasure != toType.jvmErasure) {
-            // 객체 타입이 다른 경우에는 재귀적으로 해당 타입을 변환하도록 처리
-            val targetClass = toType.jvmErasure
-            return copyProperties(value, targetClass)
+            // 객체 타입이 다른 경우에는 CustomMapper를 시도해본다
+            val mapper = customMapperRegistry.getMapper(fromType.jvmErasure, toType.jvmErasure)
+            val mappedValue = (mapper as? CustomMapper<Any, Any>)?.map(value)
+            if (mappedValue != null) return mappedValue
         }
 
         // 내장된 타입 변환을 시도한다
