@@ -13,15 +13,16 @@ import kotlin.reflect.KFunction
 import kotlin.reflect.KParameter
 import kotlin.reflect.KType
 import kotlin.reflect.full.findAnnotation
-import kotlin.reflect.full.hasAnnotation
+import kotlin.reflect.full.isSubtypeOf
 import kotlin.reflect.full.memberProperties
 import kotlin.reflect.full.primaryConstructor
 import kotlin.reflect.full.starProjectedType
 import kotlin.reflect.jvm.isAccessible
 import kotlin.reflect.jvm.jvmErasure
+import kotlin.reflect.typeOf
 
 class AnnotationAwareObjectMapper(
-    private val customTypeConverter: TypeConverter? = null,
+    private val customMapperRegistry: CustomMapperRegistry,
 ) {
     /**
      * 주어진 from 객체로부터 to 객체를 생성한다
@@ -72,8 +73,8 @@ class AnnotationAwareObjectMapper(
         val value = fromProperty.call(sourceObject)
 
         if (value == null) {
-            if (constructorParam.isOptional || constructorParam.type.isMarkedNullable) {
-                // 생성자 파라미터에 null 할당을 할 수 있는 상황이라면
+            if (constructorParam.type.isMarkedNullable) {
+                // If it's possible to assign null to the constructor parameter.
                 return value
             }
             throw IllegalStateException("${propertyName}의 값으로 null을 할당할 수 없습니다")
@@ -88,7 +89,7 @@ class AnnotationAwareObjectMapper(
             )
                 ?: throw IllegalStateException(
                     "'${constructorParam.name}: ${constructorParam.type}'에" +
-                            "'${fromProperty.name}: ${fromProperty.returnType}'을 할당할 수 없습니다",
+                        "'${fromProperty.name}: ${fromProperty.returnType}'을 할당할 수 없습니다",
                 )
 
             return convertedValue
@@ -107,86 +108,133 @@ class AnnotationAwareObjectMapper(
     private fun tryConvert(value: Any?, fromType: KType, toType: KType): Any? {
         if (value == null) return null
 
-        // 커스텀 타입 변환기를 우선적으로 시도한다
-        val converterConversion = customTypeConverter?.convert<Any>(value, toType)
-        if (converterConversion != null) return converterConversion
-
-        // @JvmInline 클래스는 TypeConverter를 사용할 것을 기대한다
-        if (fromType.jvmErasure.isInlineClass() || toType.jvmErasure.isInlineClass()) {
-            // 이미 변환된 @JvmInline 클래스에 대한 중복 변환 방지
-            if (value::class == toType.jvmErasure) return value
-
-            val inlineClassConversion = customTypeConverter?.convert<Any>(value, toType)
-                ?: throw IllegalStateException("${fromType.jvmErasure.simpleName}의 처리하는 TypeConverter 등록이 필요합니다")
-            return inlineClassConversion
+        // Identify the type parameter for List and recursively convert values.
+        if (fromType.isSubtypeOf(typeOf<List<*>>()) && toType.isSubtypeOf(typeOf<List<*>>())) {
+            return tryConvertList(value, fromType, toType)
         }
 
-        // Collection의 타입파라미터 타입을 식별하고, 재귀적으로 값을 변환한다
-        if (fromType.classifier == Collection::class && toType.classifier == Collection::class) {
-            val fromCollection = value as Collection<*>
-            val toElementType = toType.arguments.first().type
-                ?: throw IllegalStateException("목표 콜렉션의 타입을 확인할 수 없습니다")
-
-            return fromCollection
-                .map {
-                    tryConvert(
-                        value = it,
-                        fromType = it?.javaClass?.kotlin?.starProjectedType ?: fromType,
-                        toType = toElementType,
-                    )
-                        ?: throw IllegalStateException("콜렉션 엘리먼트의 값을 얻지 못했습니다: $it")
-                }
+        // Identify the type parameter for Set and recursively convert values.
+        if (fromType.isSubtypeOf(typeOf<Set<*>>()) && toType.isSubtypeOf(typeOf<Set<*>>())) {
+            return tryConvertSet(value, fromType, toType)
         }
 
-        // Map의 키, 값 각각의 타입파라미터 타입을 식별하고, 재귀적으로 값을 변환한다
+        // Identify the type parameters for Map keys and values, and recursively convert them.
         if (fromType.classifier == Map::class && toType.classifier == Map::class) {
-            val fromMap = value as Map<*, *>
-            val toKeyType = toType.arguments[0].type
-                ?: throw IllegalStateException("목표 맵의 키 타입을 확인할 수 없습니다")
-            val toValueType = toType.arguments[1].type
-                ?: throw IllegalStateException("목표 맵의 값 타입을 확인할 수 없습니다")
-
-            return fromMap
-                .mapKeys { (key, _) ->
-                    tryConvert(
-                        value = key,
-                        fromType = key?.javaClass?.kotlin?.starProjectedType ?: fromType,
-                        toType = toKeyType
-                    )
-                        ?: throw IllegalStateException("맵의 키를 얻지 못했습니다: $key")
-                }
-                .mapValues { (_, mapValue) ->
-                    tryConvert(
-                        value = mapValue,
-                        fromType = mapValue?.javaClass?.kotlin?.starProjectedType ?: fromType,
-                        toType = toValueType,
-                    )
-                        ?: throw IllegalStateException("맵의 값을 얻지 못했습니다: $mapValue")
-                }
+            return tryConvertMap(value, fromType, toType)
         }
 
         /*
-         * 런타임시 객체 타입이 서로 다른지 확인한다
-         *   - Foo와 Bar의 jvmErasure는 각각 Foo::class와 Bar::class이므로 아래 조건물을 충족한다
-         *   - List<String>과 List<Int>의 jvmErasure는 List::class로 같으므로 아래 조건문을 충족하지 않는다
+         * Check if the runtime object types are different.
+         *   - While List<String> and List<Int> both have jvmErasure of List::class, so this condition is not met.
+         *   - Foo and Bar have jvmErasure of Foo::class and Bar::class respectively, so this condition is met.
          */
         if (fromType.jvmErasure != toType.jvmErasure) {
-            // 객체 타입이 다른 경우에는 재귀적으로 해당 타입을 변환하도록 처리
-            val targetClass = toType.jvmErasure
-            return copyProperties(value, targetClass)
+            // If object types are different, try CustomMapper.
+            val mappedValue = tryConvertWithCustomMapper(value, fromType, toType)
+            if (mappedValue != null) return mappedValue
         }
 
-        // 내장된 타입 변환을 시도한다
-        val classConversion = builtInConvert<Any>(value, toType)
-        if (classConversion != null) return classConversion
+        // Attempt built-in type conversion.
+        val primitiveValue = tryConvertPrimitive<Any>(value, toType)
+        if (primitiveValue != null) return primitiveValue
 
-        // 여기까지 도달했다면 변환이 불가한 상황이라, null을 반환해서 재귀를 탈출하도록 한다
+        // If reached here, conversion is not possible, return null to exit recursion.
         return null
     }
 
+    private fun tryConvertList(
+        value: Any,
+        fromType: KType,
+        toType: KType,
+    ): List<*> {
+        val fromList = value as List<*>
+        val toElementType =
+            toType.arguments.first().type
+                ?: throw IllegalStateException(
+                    "Unable to identify target collection element type: " +
+                        "fromType=$fromType, toType=$toType",
+                )
+
+        return fromList.map {
+            tryConvert(
+                value = it,
+                fromType = it?.javaClass?.kotlin?.starProjectedType ?: fromType,
+                toType = toElementType,
+            )
+                ?: throw IllegalStateException("Unable to get collection element value: element=$it")
+        }
+    }
+
+    private fun tryConvertSet(
+        value: Any,
+        fromType: KType,
+        toType: KType,
+    ): Set<*> {
+        val fromSet = value as Set<*>
+        val toElementType =
+            toType.arguments.first().type
+                ?: throw IllegalStateException(
+                    "Unable to identify target collection element type: " +
+                        "fromType=$fromType, toType=$toType",
+                )
+
+        return fromSet
+            .map {
+                tryConvert(
+                    value = it,
+                    fromType = it?.javaClass?.kotlin?.starProjectedType ?: fromType,
+                    toType = toElementType,
+                )
+                    ?: throw IllegalStateException("Unable to get collection element value: element=$it")
+            }.toSet()
+    }
+
+    private fun tryConvertMap(
+        value: Any,
+        fromType: KType,
+        toType: KType,
+    ): Map<*, *> {
+        val fromMap = value as Map<*, *>
+        val toKeyType =
+            toType.arguments[0].type
+                ?: throw IllegalStateException("Unable to identify target map key type: toType=$toType")
+        val toValueType =
+            toType.arguments[1].type
+                ?: throw IllegalStateException("Unable to identify target map value type: toType=$toType")
+
+        return fromMap
+            .mapKeys { (key, _) ->
+                tryConvert(
+                    value = key,
+                    fromType = key?.javaClass?.kotlin?.starProjectedType ?: fromType,
+                    toType = toKeyType,
+                )
+                    ?: throw IllegalStateException("Unable to get map key's value: key=$key")
+            }.mapValues { (_, mapValue) ->
+                tryConvert(
+                    value = mapValue,
+                    fromType = mapValue?.javaClass?.kotlin?.starProjectedType ?: fromType,
+                    toType = toValueType,
+                )
+                    ?: throw IllegalStateException("Unable to get map's value: value=$mapValue")
+            }
+    }
+
+    private fun tryConvertWithCustomMapper(
+        value: Any,
+        fromType: KType,
+        toType: KType,
+    ): Any? {
+        val mapper = customMapperRegistry.getMapper(fromType.jvmErasure, toType.jvmErasure)
+        return (mapper as? CustomMapper<Any, Any>)?.map(value)
+    }
+
     @Suppress("UNCHECKED_CAST")
-    private fun <T> builtInConvert(value: Any, toType: KType): T? {
-        return when (toType.classifier) {
+    private fun <T> tryConvertPrimitive(
+        value: Any,
+        toType: KType,
+    ): T? =
+        when (toType.classifier) {
             Int::class -> value.toString().toIntOrNull() as? T
             Long::class -> value.toString().toLongOrNull() as? T
             Double::class -> value.toString().toDoubleOrNull() as? T
@@ -202,9 +250,4 @@ class AnnotationAwareObjectMapper(
             String::class -> value.toString() as? T
             else -> null
         }
-    }
-}
-
-private fun KClass<*>.isInlineClass(): Boolean {
-    return this.hasAnnotation<JvmInline>()
 }
