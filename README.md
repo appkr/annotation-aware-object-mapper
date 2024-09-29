@@ -62,7 +62,7 @@ You can copy properties from the `from` object to the `to` object, and the regis
 
 ```kotlin
 val userResource = UserResource(fullName = "John Doe", stringAge = "30")
-val user = objectMapper.copyProperties(userResource, User::class)
+val user = mapper.copyProperties(userResource, User::class)
 ```
 
 ## Installation
