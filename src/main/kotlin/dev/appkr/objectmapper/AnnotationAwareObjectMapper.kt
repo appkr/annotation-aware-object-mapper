@@ -25,51 +25,58 @@ class AnnotationAwareObjectMapper(
     private val customMapperRegistry: CustomMapperRegistry,
 ) {
     /**
-     * 주어진 from 객체로부터 to 객체를 생성한다
+     * Creates an instance of the 'to' object from the given 'from' object.
      */
-    fun <T : Any> copyProperties(from: Any, to: KClass<T>): T {
-        // to 클래스의 Primary Constructor를 구한다
-        val toConstructor: KFunction<T> = to.primaryConstructor
-            ?: throw IllegalStateException("${to.simpleName} 클래스의 생성자에 접근할 수 없습니다")
+    fun <T : Any> copyProperties(
+        from: Any,
+        to: KClass<T>,
+    ): T {
+        // Get the Primary Constructor of the 'to' class.
+        val toConstructor: KFunction<T> =
+            to.primaryConstructor
+                ?: throw IllegalStateException("Unable to access primary constructor: class=${to.simpleName}")
 
-        // to 클래스의 생성자에 전달할 프로퍼티 맵을 구한다
-        val toConstructorArgs: Map<KParameter, Any?> = toConstructor.parameters
-            .associateWith { findValueOf(constructorParam = it, sourceObject = from) }
+        // Get the property map to be passed to the 'to' class constructor.
+        val toConstructorArgs: Map<KParameter, Any?> =
+            toConstructor.parameters
+                .associateWith { findValueOf(constructorParam = it, sourceObject = from) }
 
-        // to 객체를 생성한다
+        // Create the 'to' object.
         return toConstructor.callBy(toConstructorArgs)
     }
 
     /**
-     * 원본 객체로부터 생성자의 파라미터에 할당할 값을 찾는다
+     * Finds the value to assign to the constructor parameter from the source object.
      *
-     * 값을 찾는 규칙:
-     *   - 생성자 파라미터의 이름과 원본 객체의 프로퍼티 이름이 같으면
-     *   - 생성자 파라미터의 이름과 원보 객체의 프로퍼티에 선언한 [MapTo.value] 값이 같으면
+     * Rules for finding the value:
+     *   - If the name of the constructor parameter matches the property name of the source object.
+     *   - If the name of the constructor parameter matches the [MapTo.value] declared on the property of the source object.
      *
-     * @param constructorParam 생성할 클래스의 생성자 파라미터
-     * @param sourceObject 파라미터의 값으로 할당할 값을 찾을 원본 객체
+     * @param constructorParam The constructor parameter of the class to be created.
+     * @param sourceObject The object from which the parameter value will be found.
      * @throws IllegalStateException
-     *   - 생성할 클래스의 생성자 파라미터의 값으로 할당할 값을 원본 객체에서 찾을 수 없는 경우
-     *   - 원본 객체로부터 값을 구했으나, 그 값이 null인 반면, 생성할 클래스의 파라미터는 Non-null로 선언된 경우
-     *   - 원본 객체에서 일치하는 프로퍼티를 찾았으나,
-     *   [TypeConverter], [builtInConvert]를 이용해서 생성자 파라미터에 할당할 수 있는 적절한 값으로 변경하지 못하는 경우
+     *   - When a value for the constructor parameter cannot be found in the source object
+     *   - When the value retrieved from the source object is null, but the constructor parameter is declared as non-null
+     *   - When a matching property is found in the source object, but cannot be converted to the correct type
      */
     private fun findValueOf(
         constructorParam: KParameter,
         sourceObject: Any,
     ): Any? {
-        // 값을 할당할 생성자 파라미터를 구한다
-        val propertyName = constructorParam.name
-            ?: throw IllegalStateException("생성자 파라미터 이름이 null일 수 없습니다")
+        // Get the constructor parameter to assign the value.
+        val propertyName =
+            constructorParam.name
+                ?: throw IllegalStateException("Constructor parameter name should not be null")
 
-        // 데이터 원본 객체에서 값을 찾을 프로퍼티를 구한다
-        val fromProperty = sourceObject::class.memberProperties
-            .find { it.findAnnotation<MapTo>()?.value == propertyName || it.name == propertyName }
-            ?.apply { isAccessible = true }
-            ?: throw IllegalStateException("${propertyName}의 값을 구할 수 없습니다")
+        // Get the property from the source object to retrieve the value.
+        val fromProperty =
+            sourceObject::class
+                .memberProperties
+                .find { it.findAnnotation<MapTo>()?.value == propertyName || it.name == propertyName }
+                ?.apply { isAccessible = true }
+                ?: throw IllegalStateException("Unable to find a value from the sourceObject: propertyName=$propertyName")
 
-        // 맵핑 가능한 프로퍼티는 찾았고, 원본 객체에서 값을 꺼낸다
+        // Extract the value from the matching property in the source object.
         val value = fromProperty.call(sourceObject)
 
         if (value == null) {
@@ -77,20 +84,21 @@ class AnnotationAwareObjectMapper(
                 // If it's possible to assign null to the constructor parameter.
                 return value
             }
-            throw IllegalStateException("${propertyName}의 값으로 null을 할당할 수 없습니다")
+            throw IllegalStateException("Null value cannot be assigned: paramName=$propertyName")
         }
 
-        // 꺼낸 값의 타입과, 할당할 파라미터의 타입이 일치하지 않으면, 타입 변환을 시도한다
+        // If the extracted value's type doesn't match the constructor parameter's type, try type conversion.
         if (fromProperty.returnType != constructorParam.type) {
-            val convertedValue = tryConvert(
-                value = value,
-                fromType = fromProperty.returnType,
-                toType = constructorParam.type,
-            )
-                ?: throw IllegalStateException(
-                    "'${constructorParam.name}: ${constructorParam.type}'에" +
-                        "'${fromProperty.name}: ${fromProperty.returnType}'을 할당할 수 없습니다",
+            val convertedValue =
+                tryConvert(
+                    value = value,
+                    fromType = fromProperty.returnType,
+                    toType = constructorParam.type,
                 )
+                    ?: throw IllegalStateException(
+                        "Type conversion failed: paramName=${constructorParam.name}, paramType=${constructorParam.type}, " +
+                            "sourceProperty=${fromProperty.name}, sourceType=${fromProperty.returnType}",
+                    )
 
             return convertedValue
         }
@@ -99,13 +107,17 @@ class AnnotationAwareObjectMapper(
     }
 
     /**
-     * 타입 변환을 시도한다
+     * Attempts type conversion.
      *
-     * @param value 원본 값
-     * @param fromType 원본 값의 타입
-     * @param toType 대상 값의 타입
+     * @param value The original value.
+     * @param fromType The type of the original value.
+     * @param toType The type of the target value.
      */
-    private fun tryConvert(value: Any?, fromType: KType, toType: KType): Any? {
+    private fun tryConvert(
+        value: Any?,
+        fromType: KType,
+        toType: KType,
+    ): Any? {
         if (value == null) return null
 
         // Identify the type parameter for List and recursively convert values.

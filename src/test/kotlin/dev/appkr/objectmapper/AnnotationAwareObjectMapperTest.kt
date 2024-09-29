@@ -1,3 +1,4 @@
+@file:Suppress("ktlint")
 package dev.appkr.objectmapper
 
 import io.kotest.assertions.throwables.shouldThrow
