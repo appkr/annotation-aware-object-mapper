@@ -22,7 +22,7 @@ import kotlin.reflect.jvm.jvmErasure
 import kotlin.reflect.typeOf
 
 class AnnotationAwareObjectMapper(
-    private val customMapperRegistry: CustomMapperRegistry,
+    private val customMapperRegistry: CustomMapperRegistry? = CustomMapperRegistry(),
 ) {
     /**
      * Creates an instance of the 'to' object from the given 'from' object.
@@ -237,7 +237,8 @@ class AnnotationAwareObjectMapper(
         fromType: KType,
         toType: KType,
     ): Any? {
-        val mapper = customMapperRegistry.getMapper(fromType.jvmErasure, toType.jvmErasure)
+        val mapper = customMapperRegistry?.getMapper(fromType.jvmErasure, toType.jvmErasure)
+        @Suppress("UNCHECKED_CAST")
         return (mapper as? CustomMapper<Any, Any>)?.map(value)
     }
 

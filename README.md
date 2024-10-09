@@ -9,6 +9,16 @@ This project provides an `AnnotationAwareObjectMapper` that enables property map
 - **Recursive Collection and Map Conversion**: Supports recursive conversion for collections and maps, ensuring complex data structures are correctly mapped.
 - **Type Conversion**: Handles basic type conversion between `from` and `to` models using either built-in converters or custom `TypeConverter` implementations.
 
+### Bonus Features
+
+In version `v0.0.2`, we introduced the `KClassUtils` class, which provides a method to generate dummy objects based on Kotlin's reflection capabilities. This utility simplifies creating test data by generating instances with default or dummy values for all fields.
+
+```kotlin
+val dummyStoreCollection = KClassUtils.dummy(StoreCollection::class)
+```
+
+This will generate an instance of `StoreCollection` where all properties are filled with reasonable dummy values, such as `"dummy"` for strings, `0` for numeric types, and so on. This is especially useful for testing or validating object structures without needing to manually create instances.
+
 ## Installation
 
 You can clone this repository and integrate it into your Kotlin project.
